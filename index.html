@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Control Dashboard</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            min-height: 100vh;
+        }
+        .glass { background: rgba(30,41,59,.8); backdrop-filter: blur(20px); border: 1px solid rgba(148,163,184,.2); }
+        .switch { width: 60px; height: 32px; background: #475569; border-radius: 16px; cursor: pointer; position: relative; transition: 0.3s; }
+        .switch.on { background: linear-gradient(135deg,#3b82f6,#2563eb); }
+        .switch-knob { width:24px;height:24px;background:white;border-radius:50%;position:absolute;top:4px;left:4px;transition:.3s; }
+        .switch.on .switch-knob { transform: translateX(28px); }
+    </style>
+</head>
+<body class="text-white">
+
+<!-- 🔥 PANTALLA DE CONEXIÓN -->
+<div id="loginPanel" class="fixed inset-0 flex items-center justify-center bg-black/70 z-50">
+    <div class="glass p-8 rounded-2xl max-w-md w-full">
+        <h1 class="text-2xl font-bold mb-4 text-center">Conectar con Firebase</h1>
+
+        <label class="text-sm">API Key</label>
+        <input id="apiKey" class="w-full bg-slate-800 px-4 py-2 rounded mb-4" placeholder="AIza...">
+
+        <label class="text-sm">Database URL</label>
+        <input id="dbUrl" class="w-full bg-slate-800 px-4 py-2 rounded mb-6"
+               placeholder="https://proyecto-default-rtdb.firebaseio.com/">
+
+        <button onclick="conectar()" class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-semibold">
+            Conectar
+        </button>
+    </div>
+</div>
+
+<!-- 🔥 INTERFAZ COMPLETA OCULTA HASTA QUE SE CONECTE -->
+<div id="dashboard" class="p-6 hidden">
+    <div class="max-w-7xl mx-auto">
+
+        <div class="glass rounded-2xl p-6 mb-6 flex justify-between items-center">
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                IoT Control Dashboard
+            </h1>
+            <div id="connStatus" class="px-4 py-2 rounded-full bg-red-500/20 text-red-400">● Desconectado</div>
+        </div>
+
+        <!-- 🔥 TEMPERATURA GLOBAL -->
+        <div class="glass rounded-2xl p-8 mb-6">
+            <h2 class="text-2xl font-bold mb-4">Temperatura Promedio</h2>
+            <div class="flex items-center gap-8">
+                <div class="flex-1">
+                    <div class="h-32 bg-slate-800 rounded-2xl relative">
+                        <div id="barraPromedio" class="absolute bottom-0 w-full bg-gradient-to-t from-purple-600 to-pink-500"
+                             style="height: 0%"></div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <div id="tempPromedio" class="text-7xl font-black text-purple-400">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🔥 SENSORES -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <script>
+                const sensorsHTML = (id, color) => `
+                    <div class="glass rounded-2xl p-6">
+                        <h3 class="font-bold text-lg text-${color}-400 mb-2">Sensor DS${id}</h3>
+                        <div id="temp${id}" class="text-4xl font-black text-${color}-400 mb-3">--°C</div>
+                        <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div id="barra${id}" class="h-full bg-gradient-to-r from-${color}-500 to-${color}-300" style="width: 0%"></div>
+                        </div>
+                    </div>`;
+                document.write(
+                    sensorsHTML("1","blue") +
+                    sensorsHTML("2","green") +
+                    sensorsHTML("3","orange") +
+                    sensorsHTML("4","red")
+                );
+            </script>
+        </div>
+
+        <!-- 🔥 CONTROL -->
+        <div class="glass rounded-2xl p-6">
+            <h2 class="text-2xl font-bold mb-6">Control de Dispositivos</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <script>
+                    const devices = [
+                        ["sala","Sala Principal","lightbulb"],
+                        ["laboratorio","Laboratorio","cpu"],
+                        ["ventilacion","Ventilación","fan"],
+                        ["sistema","Sistema","power"],
+                    ];
+                    devices.forEach((d,i)=>document.write(`
+                        <div class="bg-slate-800/50 p-5 rounded-xl">
+                            <div class="flex justify-between mb-3">
+                                <h3 class="font-bold">${d[1]}</h3>
+                                <i data-lucide="${d[2]}" id="icon${i+1}" class="w-5 h-5 text-slate-500"></i>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span id="estado${i+1}" class="text-sm text-slate-400">Apagado</span>
+                                <div id="switch${i+1}" class="switch" onclick="cambiar('${d[0]}',${i+1})">
+                                    <div class="switch-knob"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `));
+                </script>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- 🔥 FIREBASE CODE -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+let db = null;
+
+window.conectar = () => {
+    const api = document.getElementById("apiKey").value.trim();
+    const url = document.getElementById("dbUrl").value.trim();
+
+    if (!api || !url) {
+        Swal.fire({ icon: "error", title: "Completa todos los campos" });
+        return;
+    }
+
+    try {
+        const app = initializeApp({ apiKey: api, databaseURL: url });
+        db = getDatabase(app);
+
+        // Mostrar dashboard
+        document.getElementById("loginPanel").classList.add("hidden");
+        document.getElementById("dashboard").classList.remove("hidden");
+
+        connStatus.textContent = "● Conectado";
+        connStatus.className = "px-4 py-2 rounded-full bg-green-500/20 text-green-400";
+
+        escucharSensores();
+        escucharControles();
+
+    } catch (e) {
+        Swal.fire({ icon:"error", title:"Error al conectar", text:e.message });
+    }
+};
+
+function escucharSensores() {
+    onValue(ref(db,"temperaturas"), snap=>{
+        const d = snap.val();
+        if (!d) return;
+
+        const arr = [];
+        for (let i=1; i<=4; i++){
+            const t = parseFloat(d["sensor"+i]);
+            if (!isNaN(t)){
+                document.getElementById("temp"+i).textContent = t.toFixed(1)+"°C";
+                document.getElementById("barra"+i).style.width = (t/50*100)+"%";
+                arr.push(t);
+            }
+        }
+        if (arr.length){
+            const p = arr.reduce((a,b)=>a+b)/arr.length;
+            tempPromedio.textContent = p.toFixed(1);
+            barraPromedio.style.height = (p/50*100)+"%";
+        }
+    });
+}
+
+function escucharControles() {
+    onValue(ref(db,"control"), snap=>{
+        const d = snap.val(); if (!d) return;
+        actualizarUI(d.sala, 1);
+        actualizarUI(d.laboratorio, 2);
+        actualizarUI(d.ventilacion, 3);
+        actualizarUI(d.sistema, 4);
+    });
+}
+
+window.cambiar = (nombre,n) => {
+    if (!db) return;
+    const sw = document.getElementById("switch"+n);
+    set(ref(db,"control/"+nombre), !sw.classList.contains("on"));
+};
+
+function actualizarUI(estado,n){
+    const sw = document.getElementById("switch"+n);
+    const icon = document.getElementById("icon"+n);
+    const est = document.getElementById("estado"+n);
+
+    if (estado){
+        sw.classList.add("on");
+        icon.classList.replace("text-slate-500","text-yellow-400");
+        est.textContent = "Encendido";
+        est.classList.replace("text-slate-400","text-green-400");
+    } else {
+        sw.classList.remove("on");
+        icon.classList.replace("text-yellow-400","text-slate-500");
+        est.textContent = "Apagado";
+        est.classList.replace("text-green-400","text-slate-400");
+    }
+}
+</script>
+
+<script> lucide.createIcons(); </script>
+
+</body>
+</html>
